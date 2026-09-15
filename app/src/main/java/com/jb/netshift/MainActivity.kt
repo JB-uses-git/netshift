@@ -11,6 +11,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.google.android.material.bottomnavigation.BottomNavigationView
@@ -33,6 +34,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        applySavedTheme()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
@@ -51,6 +53,15 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_settings -> switchFragment(settingsFragment)
                 else -> false
             }
+        }
+    }
+
+    private fun applySavedTheme() {
+        val prefs = getSharedPreferences(SettingsFragment.PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.contains(SettingsFragment.KEY_DARK_MODE)) {
+            val isDark = prefs.getBoolean(SettingsFragment.KEY_DARK_MODE, false)
+            val mode = if (isDark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO
+            AppCompatDelegate.setDefaultNightMode(mode)
         }
     }
 
