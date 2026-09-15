@@ -14,6 +14,8 @@ import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.jb.netshift.data.AppDatabase
+import com.jb.netshift.data.NetworkEvent
 import java.util.concurrent.Executors
 
 class NetworkWatchService : Service() {
@@ -21,6 +23,7 @@ class NetworkWatchService : Service() {
     private lateinit var telephonyManager: TelephonyManager
     private var telephonyCallback: TelephonyCallback? = null
     private var currentIsFiveG: Boolean? = null
+    private val dbExecutor = Executors.newSingleThreadExecutor()
 
     override fun onCreate() {
         super.onCreate()
@@ -51,9 +54,27 @@ class NetworkWatchService : Service() {
         }
 
         if (currentIsFiveG != isFiveG) {
+            val previous = currentIsFiveG
             currentIsFiveG = isFiveG
             updateStatusNotification(isFiveG)
             broadcastState(isFiveG)
+            logEventToDatabase(isFiveG, previous)
+        }
+    }
+
+    private fun logEventToDatabase(isFiveG: Boolean, previousIsFiveG: Boolean?) {
+        dbExecutor.execute {
+            try {
+                val db = AppDatabase.getDatabase(applicationContext)
+                db.networkEventDao().insert(
+                    NetworkEvent(
+                        isFiveG = isFiveG,
+                        previousIsFiveG = previousIsFiveG
+                    )
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
