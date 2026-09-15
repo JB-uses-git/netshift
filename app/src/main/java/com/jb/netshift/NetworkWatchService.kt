@@ -46,6 +46,7 @@ class NetworkWatchService : Service() {
         startForeground(NOTIF_ID_STATUS, buildStatusNotification(null))
         telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
         registerCallback()
+        updateWidgetState(isRunning = true, isFiveG = null)
     }
 
     private fun registerCallback() {
@@ -83,6 +84,7 @@ class NetworkWatchService : Service() {
 
             updateStatusNotification(isFiveG)
             broadcastState(isFiveG)
+            updateWidgetState(isRunning = true, isFiveG = isFiveG)
             logEventToDatabase(isFiveG, previous)
         }
     }
@@ -137,6 +139,22 @@ class NetworkWatchService : Service() {
             putExtra(EXTRA_BYTES_USED_4G, bytesUsedOn4G)
         }
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
+    }
+
+    private fun updateWidgetState(isRunning: Boolean, isFiveG: Boolean?) {
+        getSharedPreferences(NetShiftWidget.PREFS_WIDGET, Context.MODE_PRIVATE)
+            .edit()
+            .apply {
+                if (isFiveG != null) putBoolean(NetShiftWidget.KEY_IS_FIVE_G, isFiveG)
+            }
+            .apply()
+
+        val intent = Intent(this, NetShiftWidget::class.java).apply {
+            action = NetShiftWidget.ACTION_UPDATE_WIDGET_STATE
+            putExtra(NetShiftWidget.EXTRA_IS_RUNNING, isRunning)
+            if (isFiveG != null) putExtra(NetShiftWidget.EXTRA_IS_FIVE_G, isFiveG)
+        }
+        sendBroadcast(intent)
     }
 
     private fun updateStatusNotification(isFiveG: Boolean) {
@@ -194,6 +212,7 @@ class NetworkWatchService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        updateWidgetState(isRunning = false, isFiveG = null)
         usageHandler.removeCallbacks(usageRunnable)
         telephonyCallback?.let { telephonyManager.unregisterTelephonyCallback(it) }
         super.onDestroy()
