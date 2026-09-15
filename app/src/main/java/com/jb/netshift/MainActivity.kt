@@ -1,10 +1,14 @@
 package com.jb.netshift
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -49,5 +53,16 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, NetworkWatchService::class.java)
         startForegroundService(intent)
         statusText.text = "Watching for 5G → 4G drops."
+        requestBatteryExemption()
+    }
+
+    private fun requestBatteryExemption() {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(intent)
+        }
     }
 }
