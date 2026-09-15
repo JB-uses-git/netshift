@@ -38,6 +38,17 @@
                 android:value="Detects 5G-to-4G radio fallback to alert before mobile data cap is hit" />
         </service>
 
+        <service
+            android:name=".NetShiftTileService"
+            android:icon="@drawable/ic_tile"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
