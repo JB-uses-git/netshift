@@ -13,6 +13,7 @@ import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import java.util.concurrent.Executors
 
 class NetworkWatchService : Service() {
@@ -52,7 +53,15 @@ class NetworkWatchService : Service() {
         if (currentIsFiveG != isFiveG) {
             currentIsFiveG = isFiveG
             updateStatusNotification(isFiveG)
+            broadcastState(isFiveG)
         }
+    }
+
+    private fun broadcastState(isFiveG: Boolean) {
+        val intent = Intent(ACTION_NETWORK_STATE).apply {
+            putExtra(EXTRA_IS_FIVE_G, isFiveG)
+        }
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
 
     private fun updateStatusNotification(isFiveG: Boolean) {
@@ -118,5 +127,7 @@ class NetworkWatchService : Service() {
     companion object {
         const val STATUS_CHANNEL_ID = "netshift_status"
         const val NOTIF_ID_STATUS = 1
+        const val ACTION_NETWORK_STATE = "com.jb.netshift.NETWORK_STATE"
+        const val EXTRA_IS_FIVE_G = "isFiveG"
     }
 }
