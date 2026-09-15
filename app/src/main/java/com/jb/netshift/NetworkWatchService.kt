@@ -6,13 +6,8 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.media.RingtoneManager
-import android.os.Build
+import android.graphics.Color
 import android.os.IBinder
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyDisplayInfo
 import android.telephony.TelephonyManager
@@ -24,14 +19,12 @@ class NetworkWatchService : Service() {
 
     private lateinit var telephonyManager: TelephonyManager
     private var telephonyCallback: TelephonyCallback? = null
-    private var lastWasFiveG = false
-    private var lastAlertAt = 0L
-    private val cooldownMs = 15_000L
+    private var currentIsFiveG: Boolean? = null
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannels()
-        startForeground(NOTIF_ID_SERVICE, buildServiceNotification())
+        createNotificationChannel()
+        startForeground(NOTIF_ID_STATUS, buildStatusNotification(null))
         telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
         registerCallback()
     }
@@ -56,56 +49,63 @@ class NetworkWatchService : Service() {
             else -> info.networkType == TelephonyManager.NETWORK_TYPE_NR
         }
 
-        if (lastWasFiveG && !isFiveG) fireAlert()
-        lastWasFiveG = isFiveG
+        if (currentIsFiveG != isFiveG) {
+            currentIsFiveG = isFiveG
+            updateStatusNotification(isFiveG)
+        }
     }
 
-    private fun fireAlert() {
-        val now = System.currentTimeMillis()
-        if (now - lastAlertAt < cooldownMs) return
-        lastAlertAt = now
-
-        val vibrator = if (Build.VERSION.SDK_INT >= 31)
-            (getSystemService(VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
-        else getSystemService(VIBRATOR_SERVICE) as Vibrator
-
-        vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 400, 200, 400, 200, 400), -1))
-
-        val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
-            .setContentTitle("Dropped to 4G")
-            .setContentText("Switch back to 5G now, or your daily 4G quota takes the hit.")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setAutoCancel(true)
-            .build()
-
-        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID_ALERT, notification)
+    private fun updateStatusNotification(isFiveG: Boolean) {
+        val notification = buildStatusNotification(isFiveG)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID_STATUS, notification)
     }
 
-    private fun buildServiceNotification() =
-        NotificationCompat.Builder(this, SERVICE_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
-            .setContentTitle("NetShift is watching your network type")
+    private fun buildStatusNotification(isFiveG: Boolean?): android.app.Notification {
+        val (title, text, color, icon) = when (isFiveG) {
+            true -> listOf(
+                "Connected: 5G",
+                "You're on 5G. Unlimited data active.",
+                Color.parseColor("#2E7D32"),
+                android.R.drawable.presence_online
+            )
+            false -> listOf(
+                "Fallback: 4G",
+                "Dropped to 4G. Watch your daily quota.",
+                Color.parseColor("#C62828"),
+                android.R.drawable.presence_busy
+            )
+            null -> listOf(
+                "NetShift is watching your network type",
+                "Waiting for first reading…",
+                Color.parseColor("#616161"),
+                android.R.drawable.stat_notify_sync
+            )
+        }
+
+        return NotificationCompat.Builder(this, STATUS_CHANNEL_ID)
+            .setSmallIcon(icon as Int)
+            .setContentTitle(title as String)
+            .setContentText(text as String)
+            .setColor(color as Int)
+            .setColorized(true)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
             .build()
+    }
 
-    private fun createNotificationChannels() {
+    private fun createNotificationChannel() {
         val nm = getSystemService(NotificationManager::class.java)
-
-        nm.createNotificationChannel(
-            NotificationChannel(SERVICE_CHANNEL_ID, "Background watcher", NotificationManager.IMPORTANCE_LOW)
-        )
-
-        val alertChannel = NotificationChannel(ALERT_CHANNEL_ID, "5G drop alerts", NotificationManager.IMPORTANCE_HIGH)
-        alertChannel.setSound(
-            RingtoneManager.getActualDefaultRingtoneUri(this, RingtoneManager.TYPE_ALARM),
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ALARM)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-        )
-        nm.createNotificationChannel(alertChannel)
+        val channel = NotificationChannel(
+            STATUS_CHANNEL_ID,
+            "Live network status",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            setSound(null, null)
+            enableVibration(false)
+        }
+        nm.createNotificationChannel(channel)
     }
 
     override fun onDestroy() {
@@ -116,9 +116,7 @@ class NetworkWatchService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
-        const val SERVICE_CHANNEL_ID = "netshift_service"
-        const val ALERT_CHANNEL_ID = "netshift_alert"
-        const val NOTIF_ID_SERVICE = 1
-        const val NOTIF_ID_ALERT = 2
+        const val STATUS_CHANNEL_ID = "netshift_status"
+        const val NOTIF_ID_STATUS = 1
     }
 }
