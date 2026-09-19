@@ -42,18 +42,11 @@ class NetworkEventAdapter(
         private val eventBadge: TextView = itemView.findViewById(R.id.eventBadge)
 
         fun bind(event: NetworkEvent) {
-            val colorGreen = Color.parseColor("#2E7D32")
             val colorRed = Color.parseColor("#C62828")
 
-            if (event.isFiveG) {
-                eventTitle.text = if (event.previousIsFiveG == false) "4G → 5G (Restored)" else "Connected to 5G"
-                eventBadge.text = "5G"
-                setIndicatorAndBadgeColor(colorGreen)
-            } else {
-                eventTitle.text = if (event.previousIsFiveG == true) "5G → 4G (Fallback)" else "Connected to 4G"
-                eventBadge.text = "4G"
-                setIndicatorAndBadgeColor(colorRed)
-            }
+            eventTitle.text = "4G Fallback"
+            eventBadge.text = "4G"
+            setIndicatorAndBadgeColor(colorRed)
 
             eventTime.text = dateFormat.format(Date(event.timestamp))
         }

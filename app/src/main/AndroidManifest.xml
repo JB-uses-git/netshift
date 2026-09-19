@@ -57,6 +57,15 @@
             </intent-filter>
         </receiver>
 
+        <service
+            android:name=".DataKillSwitchService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".NetShiftWidget"
             android:exported="true">

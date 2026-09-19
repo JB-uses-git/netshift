@@ -12,6 +12,9 @@ interface NetworkEventDao {
     @Query("SELECT * FROM network_events ORDER BY timestamp DESC")
     fun getAllEvents(): List<NetworkEvent>
 
+    @Query("SELECT * FROM network_events WHERE isFiveG = 0 ORDER BY timestamp DESC")
+    fun get4GEvents(): List<NetworkEvent>
+
     @Query("DELETE FROM network_events")
     fun clearAll()
 }

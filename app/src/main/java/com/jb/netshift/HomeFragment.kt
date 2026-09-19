@@ -26,13 +26,25 @@ class HomeFragment : Fragment() {
     private lateinit var dataUsageValue: TextView
     private lateinit var dataUsageSubtitle: TextView
 
+    private var lastIsFiveG: Boolean? = null
+
     private val networkReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == NetworkWatchService.ACTION_NETWORK_STATE) {
                 val isFiveG = intent.getBooleanExtra(NetworkWatchService.EXTRA_IS_FIVE_G, false)
                 val bytesUsed4G = intent.getLongExtra(NetworkWatchService.EXTRA_BYTES_USED_4G, 0L)
+                lastIsFiveG = isFiveG
                 updateCard(isFiveG)
                 updateDataUsage(isFiveG, bytesUsed4G)
+            }
+        }
+    }
+
+    private val killSwitchReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == DataKillSwitchService.ACTION_KILLSWITCH_STATE) {
+                val active = intent.getBooleanExtra(DataKillSwitchService.EXTRA_KILLSWITCH_ACTIVE, false)
+                updateKillSwitchIndicator(active)
             }
         }
     }
@@ -71,15 +83,21 @@ class HomeFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        val filter = IntentFilter(NetworkWatchService.ACTION_NETWORK_STATE)
-        LocalBroadcastManager.getInstance(requireContext())
-            .registerReceiver(networkReceiver, filter)
+        val lbm = LocalBroadcastManager.getInstance(requireContext())
+        lbm.registerReceiver(networkReceiver, IntentFilter(NetworkWatchService.ACTION_NETWORK_STATE))
+        lbm.registerReceiver(killSwitchReceiver, IntentFilter(DataKillSwitchService.ACTION_KILLSWITCH_STATE))
+
+        // Sync kill-switch indicator with current state
+        if (DataKillSwitchService.isActive) {
+            updateKillSwitchIndicator(true)
+        }
     }
 
     override fun onPause() {
         super.onPause()
-        LocalBroadcastManager.getInstance(requireContext())
-            .unregisterReceiver(networkReceiver)
+        val lbm = LocalBroadcastManager.getInstance(requireContext())
+        lbm.unregisterReceiver(networkReceiver)
+        lbm.unregisterReceiver(killSwitchReceiver)
     }
 
     fun updateStatusText(text: String) {
@@ -94,9 +112,31 @@ class HomeFragment : Fragment() {
             networkTypeText.text = "5G"
             networkStatusText.text = "You're on 5G. Unlimited data active."
         } else {
-            statusCard.setCardBackgroundColor(Color.parseColor("#C62828"))
-            networkTypeText.text = "4G"
-            networkStatusText.text = "Dropped to 4G. Watch your daily quota."
+            if (DataKillSwitchService.isActive) {
+                statusCard.setCardBackgroundColor(Color.parseColor("#E65100"))
+                networkTypeText.text = "4G"
+                networkStatusText.text = "🛑 Data blocked — waiting for 5G to return"
+            } else {
+                statusCard.setCardBackgroundColor(Color.parseColor("#C62828"))
+                networkTypeText.text = "4G"
+                networkStatusText.text = "Dropped to 4G. Watch your daily quota."
+            }
+        }
+    }
+
+    private fun updateKillSwitchIndicator(active: Boolean) {
+        if (active) {
+            statusCard.setCardBackgroundColor(Color.parseColor("#E65100"))
+            networkStatusText.text = "🛑 Data blocked — waiting for 5G to return"
+            dataSessionStatus.text = "Data Blocked"
+            dataSessionStatus.setTextColor(Color.parseColor("#E65100"))
+            dataUsageSubtitle.text = "Mobile data paused to protect your daily quota"
+        } else {
+            // Revert to normal state based on current network
+            val isFiveG = lastIsFiveG
+            if (isFiveG != null) {
+                updateCard(isFiveG)
+            }
         }
     }
 
@@ -108,10 +148,17 @@ class HomeFragment : Fragment() {
             dataUsageValue.text = "0.0 MB"
             dataUsageSubtitle.text = "Connected to 5G (No quota consumed)"
         } else {
-            dataSessionStatus.text = "Quota Active (4G)"
-            dataSessionStatus.setTextColor(Color.parseColor("#C62828"))
-            dataUsageValue.text = String.format(Locale.US, "%.2f MB", mb)
-            dataUsageSubtitle.text = "Mobile data used since last 4G fallback"
+            if (DataKillSwitchService.isActive) {
+                dataSessionStatus.text = "Data Blocked"
+                dataSessionStatus.setTextColor(Color.parseColor("#E65100"))
+                dataUsageValue.text = String.format(Locale.US, "%.2f MB", mb)
+                dataUsageSubtitle.text = "Mobile data paused to protect your daily quota"
+            } else {
+                dataSessionStatus.text = "Quota Active (4G)"
+                dataSessionStatus.setTextColor(Color.parseColor("#C62828"))
+                dataUsageValue.text = String.format(Locale.US, "%.2f MB", mb)
+                dataUsageSubtitle.text = "Mobile data used since last 4G fallback"
+            }
         }
     }
 
@@ -123,5 +170,6 @@ class HomeFragment : Fragment() {
         dataSessionStatus.setTextColor(Color.parseColor("#616161"))
         dataUsageValue.text = "0.0 MB"
         dataUsageSubtitle.text = "Service stopped"
+        lastIsFiveG = null
     }
 }

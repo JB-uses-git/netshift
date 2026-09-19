@@ -50,7 +50,7 @@ class HistoryFragment : Fragment() {
         executor.execute {
             val context = context ?: return@execute
             val db = AppDatabase.getDatabase(context)
-            val events = db.networkEventDao().getAllEvents()
+            val events = db.networkEventDao().get4GEvents()
 
             activity?.runOnUiThread {
                 if (events.isEmpty()) {

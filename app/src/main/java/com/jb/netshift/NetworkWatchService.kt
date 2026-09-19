@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.os.Handler
 import android.os.IBinder
@@ -78,8 +80,12 @@ class NetworkWatchService : Service() {
                 snapshotTrafficStats()
                 usageHandler.removeCallbacks(usageRunnable)
                 usageHandler.post(usageRunnable)
+                // Trigger kill-switch if enabled and on cellular
+                triggerKillSwitch(activate = true)
             } else {
                 usageHandler.removeCallbacks(usageRunnable)
+                // Stop kill-switch immediately on 5G return
+                triggerKillSwitch(activate = false)
             }
 
             updateStatusNotification(isFiveG)
@@ -87,6 +93,29 @@ class NetworkWatchService : Service() {
             updateWidgetState(isRunning = true, isFiveG = isFiveG)
             logEventToDatabase(isFiveG, previous)
         }
+    }
+
+    private fun triggerKillSwitch(activate: Boolean) {
+        val prefs = getSharedPreferences(SettingsFragment.PREFS_NAME, Context.MODE_PRIVATE)
+        val autoBlockEnabled = prefs.getBoolean(KEY_AUTO_BLOCK_4G, true)
+
+        if (activate) {
+            if (autoBlockEnabled && isOnCellular()) {
+                DataKillSwitchService.start(this)
+            }
+        } else {
+            // Always stop kill-switch on 5G return, regardless of toggle state
+            if (DataKillSwitchService.isActive) {
+                DataKillSwitchService.stop(this)
+            }
+        }
+    }
+
+    private fun isOnCellular(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(activeNetwork) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
     }
 
     private fun snapshotTrafficStats() {
@@ -163,6 +192,8 @@ class NetworkWatchService : Service() {
     }
 
     private fun buildStatusNotification(isFiveG: Boolean?): android.app.Notification {
+        val killSwitchActive = DataKillSwitchService.isActive
+
         val (title, text, color, icon) = when (isFiveG) {
             true -> listOf(
                 "Connected: 5G",
@@ -170,12 +201,21 @@ class NetworkWatchService : Service() {
                 Color.parseColor("#2E7D32"),
                 android.R.drawable.presence_online
             )
-            false -> listOf(
-                "Fallback: 4G",
-                "Dropped to 4G. Watch your daily quota.",
-                Color.parseColor("#C62828"),
-                android.R.drawable.presence_busy
-            )
+            false -> if (killSwitchActive) {
+                listOf(
+                    "Fallback: 4G — Data Blocked",
+                    "Mobile data paused to protect your daily quota.",
+                    Color.parseColor("#E65100"),
+                    android.R.drawable.ic_lock_idle_lock
+                )
+            } else {
+                listOf(
+                    "Fallback: 4G",
+                    "Dropped to 4G. Watch your daily quota.",
+                    Color.parseColor("#C62828"),
+                    android.R.drawable.presence_busy
+                )
+            }
             null -> listOf(
                 "NetShift is watching your network type",
                 "Waiting for first reading…",
@@ -230,6 +270,7 @@ class NetworkWatchService : Service() {
         const val PREFS_STATS = "netshift_data_stats"
         const val KEY_4G_START_BYTES = "snap_bytes_4g"
         const val KEY_4G_START_TIME = "snap_time_4g"
+        const val KEY_AUTO_BLOCK_4G = "auto_block_4g"
 
         @Volatile
         var isRunning: Boolean = false
