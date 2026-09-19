@@ -24,10 +24,19 @@ import com.jb.netshift.data.AppDatabase
 import com.jb.netshift.data.NetworkEvent
 import java.util.concurrent.Executors
 
+import android.net.Network
+import android.net.NetworkRequest
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+
 class NetworkWatchService : Service() {
 
     private lateinit var telephonyManager: TelephonyManager
     private var telephonyCallback: TelephonyCallback? = null
+    private lateinit var connectivityManager: ConnectivityManager
+    private var isWifiConnected = false
     private var currentIsFiveG: Boolean? = null
     private val dbExecutor = Executors.newSingleThreadExecutor()
     private val usageHandler = Handler(Looper.getMainLooper())
@@ -41,12 +50,59 @@ class NetworkWatchService : Service() {
         }
     }
 
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+            val hasWifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            if (isWifiConnected != hasWifi) {
+                isWifiConnected = hasWifi
+                if (isWifiConnected) {
+                    // Wi-Fi connected: pause/stop killswitch so Wi-Fi traffic is never blocked
+                    if (DataKillSwitchService.isActive) {
+                        DataKillSwitchService.stop(this@NetworkWatchService)
+                    }
+                } else {
+                    // Wi-Fi lost: If on 4G and auto-block enabled, engage kill-switch
+                    if (currentIsFiveG == false) {
+                        triggerKillSwitch(activate = true)
+                    }
+                }
+                broadcastState(currentIsFiveG ?: false)
+            }
+        }
+
+        override fun onLost(network: Network) {
+            val caps = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+            val hasWifi = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            if (isWifiConnected && !hasWifi) {
+                isWifiConnected = false
+                if (currentIsFiveG == false) {
+                    triggerKillSwitch(activate = true)
+                }
+                broadcastState(currentIsFiveG ?: false)
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         isRunning = true
         createNotificationChannel()
         startForeground(NOTIF_ID_STATUS, buildStatusNotification(null))
         telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
+        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        // Check initial Wi-Fi capability
+        val currentNet = connectivityManager.activeNetwork
+        val caps = connectivityManager.getNetworkCapabilities(currentNet)
+        isWifiConnected = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+
+        // Register Wi-Fi callback
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        connectivityManager.registerNetworkCallback(request, networkCallback)
+
         registerCallback()
         updateWidgetState(isRunning = true, isFiveG = null)
     }
@@ -80,8 +136,10 @@ class NetworkWatchService : Service() {
                 snapshotTrafficStats()
                 usageHandler.removeCallbacks(usageRunnable)
                 usageHandler.post(usageRunnable)
-                // Trigger kill-switch if enabled and on cellular
+                // Trigger kill-switch if enabled, not on Wi-Fi, and on cellular
                 triggerKillSwitch(activate = true)
+                // Alert via vibration if user enabled it
+                alertFallbackTo4G()
             } else {
                 usageHandler.removeCallbacks(usageRunnable)
                 // Stop kill-switch immediately on 5G return
@@ -95,16 +153,41 @@ class NetworkWatchService : Service() {
         }
     }
 
+    private fun alertFallbackTo4G() {
+        val prefs = getSharedPreferences(SettingsFragment.PREFS_NAME, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_VIBRATE_ALERT, true)) return
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 250, 100, 250), -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(longArrayOf(0, 250, 100, 250), -1)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     private fun triggerKillSwitch(activate: Boolean) {
         val prefs = getSharedPreferences(SettingsFragment.PREFS_NAME, Context.MODE_PRIVATE)
         val autoBlockEnabled = prefs.getBoolean(KEY_AUTO_BLOCK_4G, true)
 
         if (activate) {
-            if (autoBlockEnabled && isOnCellular()) {
+            // Only engage killswitch if not on Wi-Fi and mobile data is on
+            if (autoBlockEnabled && !isWifiConnected && isOnCellular()) {
                 DataKillSwitchService.start(this)
             }
         } else {
-            // Always stop kill-switch on 5G return, regardless of toggle state
+            // Stop kill-switch on 5G return or Wi-Fi connected
             if (DataKillSwitchService.isActive) {
                 DataKillSwitchService.stop(this)
             }
@@ -166,6 +249,7 @@ class NetworkWatchService : Service() {
         val intent = Intent(ACTION_NETWORK_STATE).apply {
             putExtra(EXTRA_IS_FIVE_G, isFiveG)
             putExtra(EXTRA_BYTES_USED_4G, bytesUsedOn4G)
+            putExtra(EXTRA_IS_WIFI, isWifiConnected)
         }
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
@@ -255,6 +339,15 @@ class NetworkWatchService : Service() {
         updateWidgetState(isRunning = false, isFiveG = null)
         usageHandler.removeCallbacks(usageRunnable)
         telephonyCallback?.let { telephonyManager.unregisterTelephonyCallback(it) }
+        try {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        // Safety: Ensure killswitch is stopped so internet isn't left blocked
+        if (DataKillSwitchService.isActive) {
+            DataKillSwitchService.stop(this)
+        }
         super.onDestroy()
     }
 
@@ -266,11 +359,15 @@ class NetworkWatchService : Service() {
         const val ACTION_NETWORK_STATE = "com.jb.netshift.NETWORK_STATE"
         const val EXTRA_IS_FIVE_G = "isFiveG"
         const val EXTRA_BYTES_USED_4G = "bytesUsed4G"
+        const val EXTRA_IS_WIFI = "isWifi"
 
         const val PREFS_STATS = "netshift_data_stats"
         const val KEY_4G_START_BYTES = "snap_bytes_4g"
         const val KEY_4G_START_TIME = "snap_time_4g"
         const val KEY_AUTO_BLOCK_4G = "auto_block_4g"
+        const val KEY_VIBRATE_ALERT = "vibrate_alert"
+        const val KEY_DAILY_QUOTA_MB = "daily_quota_mb"
+        const val DEFAULT_DAILY_QUOTA_MB = 1500L
 
         @Volatile
         var isRunning: Boolean = false

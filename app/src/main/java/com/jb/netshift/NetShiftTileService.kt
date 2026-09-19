@@ -16,6 +16,9 @@ class NetShiftTileService : TileService() {
         super.onClick()
         if (NetworkWatchService.isRunning) {
             stopService(Intent(this, NetworkWatchService::class.java))
+            if (DataKillSwitchService.isActive) {
+                DataKillSwitchService.stop(this)
+            }
         } else {
             startForegroundService(Intent(this, NetworkWatchService::class.java))
         }
