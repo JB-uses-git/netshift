@@ -92,16 +92,19 @@ class NetworkWatchService : Service() {
         telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
         connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-        // Check initial Wi-Fi capability
-        val currentNet = connectivityManager.activeNetwork
-        val caps = connectivityManager.getNetworkCapabilities(currentNet)
-        isWifiConnected = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        // Check initial Wi-Fi capability & register callback defensively
+        try {
+            val currentNet = connectivityManager.activeNetwork
+            val caps = connectivityManager.getNetworkCapabilities(currentNet)
+            isWifiConnected = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
 
-        // Register Wi-Fi callback
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-        connectivityManager.registerNetworkCallback(request, networkCallback)
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            connectivityManager.registerNetworkCallback(request, networkCallback)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
 
         registerCallback()
         updateWidgetState(isRunning = true, isFiveG = null)
@@ -195,10 +198,15 @@ class NetworkWatchService : Service() {
     }
 
     private fun isOnCellular(): Boolean {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val activeNetwork = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(activeNetwork) ?: return false
-        return caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        return try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val activeNetwork = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(activeNetwork) ?: return false
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            true
+        }
     }
 
     private fun snapshotTrafficStats() {
