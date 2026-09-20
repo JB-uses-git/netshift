@@ -17,6 +17,7 @@ import androidx.fragment.app.Fragment
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.jb.netshift.data.AppDatabase
 import java.util.Locale
@@ -46,9 +47,9 @@ class HomeFragment : Fragment() {
     private lateinit var textStatsProtectedTime: TextView
     private lateinit var textStatsQuotaSaved: TextView
 
+    private lateinit var cardServiceMaster: MaterialCardView
     private lateinit var statusText: TextView
-    private lateinit var startButton: MaterialButton
-    private lateinit var stopButton: MaterialButton
+    private lateinit var switchWatcher: MaterialSwitch
 
     private var lastIsFiveG: Boolean? = null
     private var lastIsWifi: Boolean = false
@@ -65,6 +66,7 @@ class HomeFragment : Fragment() {
                 lastIsWifi = isWifi
                 lastBytes4G = bytesUsed4G
 
+                updateServiceChip(NetworkWatchService.isRunning)
                 updateUIState()
                 loadStats()
             }
@@ -111,9 +113,9 @@ class HomeFragment : Fragment() {
         textStatsProtectedTime = view.findViewById(R.id.textStatsProtectedTime)
         textStatsQuotaSaved = view.findViewById(R.id.textStatsQuotaSaved)
 
+        cardServiceMaster = view.findViewById(R.id.cardServiceMaster)
         statusText = view.findViewById(R.id.statusText)
-        startButton = view.findViewById(R.id.startButton)
-        stopButton = view.findViewById(R.id.stopButton)
+        switchWatcher = view.findViewById(R.id.switchWatcher)
 
         btnEmergencyUnblock.setOnClickListener {
             context?.let { ctx ->
@@ -131,20 +133,20 @@ class HomeFragment : Fragment() {
             }
         }
 
-        startButton.setOnClickListener {
-            (activity as? MainActivity)?.requestPermissionsAndStart()
+        // Single Master Toggle card synchronized with real working state
+        cardServiceMaster.setOnClickListener {
+            val mainActivity = activity as? MainActivity ?: return@setOnClickListener
+            if (NetworkWatchService.isRunning) {
+                statusText.text = "Stopping..."
+                mainActivity.stopWatching()
+            } else {
+                statusText.text = "Starting..."
+                mainActivity.requestPermissionsAndStart()
+            }
         }
 
-        stopButton.setOnClickListener {
-            activity?.let {
-                it.stopService(Intent(it, NetworkWatchService::class.java))
-                if (DataKillSwitchService.isActive) {
-                    DataKillSwitchService.stop(it)
-                }
-                statusText.text = "Monitoring paused"
-                updateServiceChip(isRunning = false)
-                resetCard()
-            }
+        serviceStatusChip.setOnClickListener {
+            cardServiceMaster.performClick()
         }
     }
 
@@ -166,6 +168,13 @@ class HomeFragment : Fragment() {
         lbm.unregisterReceiver(killSwitchReceiver)
     }
 
+    fun onServiceStateChanged(isRunning: Boolean) {
+        updateServiceChip(isRunning)
+        if (!isRunning) {
+            resetCard()
+        }
+    }
+
     fun updateStatusText(text: String) {
         if (::statusText.isInitialized) {
             statusText.text = text
@@ -178,10 +187,16 @@ class HomeFragment : Fragment() {
             serviceStatusChip.text = "MONITORING"
             serviceStatusChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#2E7D32"))
             statusText.text = "Actively monitoring network type"
+            if (::switchWatcher.isInitialized) {
+                switchWatcher.isChecked = true
+            }
         } else {
             serviceStatusChip.text = "STOPPED"
             serviceStatusChip.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#757575"))
-            statusText.text = "Monitoring is stopped"
+            statusText.text = "Monitoring paused • Tap to start"
+            if (::switchWatcher.isInitialized) {
+                switchWatcher.isChecked = false
+            }
         }
     }
 
@@ -312,5 +327,8 @@ class HomeFragment : Fragment() {
         dataUsageSubtitle.text = "Service stopped"
         quotaProgressBar.progress = 0
         lastIsFiveG = null
+        if (::switchWatcher.isInitialized) {
+            switchWatcher.isChecked = false
+        }
     }
 }

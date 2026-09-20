@@ -13,6 +13,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import com.google.android.material.bottomnavigation.BottomNavigationView
 
@@ -26,9 +28,11 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
-        if (grants.values.all { it }) startWatching()
-        else {
-            val home = supportFragmentManager.findFragmentByTag("home") as? HomeFragment
+        val home = supportFragmentManager.findFragmentByTag("home") as? HomeFragment
+        if (grants.values.all { it }) {
+            startWatching()
+        } else {
+            home?.onServiceStateChanged(isRunning = false)
             home?.updateStatusText("Permissions denied — can't monitor network type.")
         }
     }
@@ -37,6 +41,14 @@ class MainActivity : AppCompatActivity() {
         applySavedTheme()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        // Handle edge-to-edge system bars so UI never overlaps the notification/status bar
+        val mainLayout = findViewById<android.view.View>(R.id.mainLayout)
+        ViewCompat.setOnApplyWindowInsetsListener(mainLayout) { view, insets ->
+            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            view.setPadding(0, statusBars.top, 0, 0)
+            insets
+        }
 
         if (savedInstanceState == null) {
             supportFragmentManager.beginTransaction()
@@ -82,24 +94,47 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
 
-        if (missing.isEmpty()) startWatching() else permissionLauncher.launch(missing.toTypedArray())
+        if (missing.isEmpty()) {
+            startWatching()
+        } else {
+            permissionLauncher.launch(missing.toTypedArray())
+        }
     }
 
-    private fun startWatching() {
+    fun startWatching() {
         val intent = Intent(this, NetworkWatchService::class.java)
         startForegroundService(intent)
         val home = supportFragmentManager.findFragmentByTag("home") as? HomeFragment
-        home?.updateStatusText("Watching for 5G → 4G drops.")
+        home?.onServiceStateChanged(isRunning = true)
         requestBatteryExemption()
     }
 
+    fun stopWatching() {
+        stopService(Intent(this, NetworkWatchService::class.java))
+        if (DataKillSwitchService.isActive) {
+            DataKillSwitchService.stop(this)
+        }
+        val home = supportFragmentManager.findFragmentByTag("home") as? HomeFragment
+        home?.onServiceStateChanged(isRunning = false)
+    }
+
     private fun requestBatteryExemption() {
+        val prefs = getSharedPreferences(SettingsFragment.PREFS_NAME, Context.MODE_PRIVATE)
+        // Check if we have already prompted the user to avoid annoying repeated popups
+        val hasPrompted = prefs.getBoolean("has_prompted_battery_opt", false)
+        if (hasPrompted) return
+
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:$packageName")
+            prefs.edit().putBoolean("has_prompted_battery_opt", true).apply()
+            try {
+                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-            startActivity(intent)
         }
     }
 }
